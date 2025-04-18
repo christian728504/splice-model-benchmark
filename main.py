@@ -13,7 +13,10 @@
 from models.segmentnt import SegmentNTEvaluator
 
 def main():
-    evaluator = SegmentNTEvaluator()
+    evaluator = SegmentNTEvaluator(
+        aurpc_plot_path="results/segmentnt_siteonly.png",
+        consensus_fasta="reference_files/GCA_000001405.15_GRCh38_no_alt_analysis_set.fasta"
+    )
     evaluator.get_ground_truth()
     evaluator.generate_segmentnt_predictions()
     evaluator.calculate_and_plot_metrics()

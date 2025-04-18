@@ -14,7 +14,6 @@ from tqdm import tqdm
 from Bio.Seq import Seq
 from urllib.request import urlretrieve
 
-from utils import one_hot_encode
 from preprocess.make_fasta import make_fasta
 
 class SegmentNTEvaluator:
@@ -23,7 +22,7 @@ class SegmentNTEvaluator:
                  transcript_quantifications: tuple = ('reference_files/transcript_quantifications_rep1.tsv', 'reference_files/transcript_quantifications_rep2.tsv'),
                  consensus_fasta: str = 'reference_files/GM12878.fasta',
                  sequence_length: int = 30000,
-                 batch_size: int = 6,
+                 batch_size: int = 4,
                  transcript_count_threshold: int = 2,
                  filter_transcripts: bool = True,
                  predicitons_path: str = 'results/segmentnt_predicitons.zarr',
@@ -173,23 +172,72 @@ class SegmentNTEvaluator:
         parameters, apply_fn, tokenizer, keys, donor_idx, acceptor_idx = args
         sequences = list(batch.values())
         tokens_ids = [b[1] for b in tokenizer.batch_tokenize(sequences)]
-        tokens = jnp.asarray(tokens_ids, dtype=jnp.int32)
+        tokens = jnp.stack([jnp.asarray(tokens_ids, dtype=jnp.int32)], axis=0)
         outputs = apply_fn(parameters, keys, tokens)
         probabilities = jax.nn.softmax(outputs["logits"], axis=-1)[..., -1]
         
         for i, (chrom, index, strand) in enumerate(batch.keys()):
-            donor_window = np.array(probabilities[0, i, :, donor_idx])
-            acceptor_window = np.array(probabilities[0, i, :, acceptor_idx])
+            # donor_window = np.array(probabilities[0, i, :, donor_idx])
+            # acceptor_window = np.array(probabilities[0, i, :, acceptor_idx])
+            
+            # if strand == '-':
+            #     acceptor_window = acceptor_window[::-1]
+            #     donor_window = donor_window[::-1]
+            
+            # half_window = self.sequence_length // 2
+            # window_start = index - half_window
+            
+            # self._acceptor_predictions[chrom][window_start:window_start+self.sequence_length] = acceptor_window
+            # self._donor_predictions[chrom][window_start:window_start+self.sequence_length] = donor_window
+            
+            ######
+            
+            # donor_window = np.array(probabilities[0, i, :, donor_idx])
+            # acceptor_window = np.array(probabilities[0, i, :, acceptor_idx])
+            
+            # if strand == '-':
+            #     acceptor_window = acceptor_window[::-1]
+            #     donor_window = donor_window[::-1]
+            
+            # half_window = self.sequence_length // 2
+            # window_start = index - half_window
+            # window_end = window_start + self.sequence_length
+            
+            # acceptor_mask = self._acceptor_predictions[chrom][window_start:window_end] != 0
+            # donor_mask = self._donor_predictions[chrom][window_start:window_end] != 0
+            
+            # current_acceptor = self._acceptor_predictions[chrom][window_start:window_end]
+            # current_donor = self._donor_predictions[chrom][window_start:window_end]
+            
+            # alpha = 0.5
+            
+            # if np.any(acceptor_mask):
+            #     current_acceptor[acceptor_mask] = current_acceptor[acceptor_mask] * (1-alpha) + acceptor_window[acceptor_mask] * alpha
+            # if np.any(donor_mask):
+            #     current_donor[donor_mask] = current_donor[donor_mask] * (1-alpha) + donor_window[donor_mask] * alpha
+            
+            # current_acceptor[np.logical_not(acceptor_mask)] = acceptor_window[np.logical_not(acceptor_mask)]
+            # current_donor[np.logical_not(donor_mask)] = donor_window[np.logical_not(donor_mask)]
+            
+            # self._acceptor_predictions[chrom][window_start:window_end] = current_acceptor
+            # self._donor_predictions[chrom][window_start:window_end] = current_donor
+            
+            ######
+            
+            half_total = self.sequence_length // 2
+            window_start = index - half_total
+            relative_pos = index - window_start
             
             if strand == '-':
-                acceptor_window = acceptor_window[::-1]
-                donor_window = donor_window[::-1]
+                center_pos = self.sequence_length - 1 - relative_pos
+            else:
+                center_pos = relative_pos
             
-            half_window = self.sequence_length // 2
-            window_start = index - half_window
+            donor_pred = np.array(probabilities[0, i, center_pos, donor_idx])
+            acceptor_pred = np.array(probabilities[0, i, center_pos, acceptor_idx])
             
-            self._acceptor_predictions[chrom][window_start:window_start+self.sequence_length] = acceptor_window
-            self._donor_predictions[chrom][window_start:window_start+self.sequence_length] = donor_window
+            self._acceptor_predictions[chrom][index] = acceptor_pred
+            self._donor_predictions[chrom][index] = donor_pred
                         
 
     def generate_segmentnt_predictions(self):
@@ -220,11 +268,12 @@ class SegmentNTEvaluator:
             max_positions=max_tokens + 1,
         )
         forward_fn = hk.transform(forward_fn)
-        device = jax.devices("gpu")[1]
-        apply_fn = lambda *args: forward_fn.apply(*args)
+        
+        devices = jax.devices("gpu")[1:2]
+        apply_fn = jax.pmap(forward_fn.apply, devices=devices)
         random_key = jax.random.PRNGKey(seed=0)
-        keys = jax.device_put(random_key, device=device)
-        parameters = jax.device_put(parameters, device=device)
+        keys = jax.device_put_replicated(random_key, devices=devices)
+        parameters = jax.device_put_replicated(parameters, devices=devices)
         donor_idx = config.features.index('splice_donor')
         acceptor_idx = config.features.index('splice_acceptor')
             
