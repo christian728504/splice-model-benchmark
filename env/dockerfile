@@ -1,0 +1,37 @@
+# Base image with CUDA support
+FROM nvidia/cuda:12.6.3-cudnn-devel-ubuntu22.04
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
+
+# Prevent interactive prompts during build
+ENV DEBIAN_FRONTEND=noninteractive
+ENV TZ="America/New_York"
+
+# Update system
+RUN apt update && apt upgrade -y && apt install -y ca-certificates
+
+# Add Apache Arrow repository
+RUN apt install -y -V ca-certificates lsb-release wget && \
+    wget https://repo1.maven.org/maven2/org/apache/arrow/$(lsb_release --id --short | tr 'A-Z' 'a-z')/apache-arrow-apt-source-latest-$(lsb_release --codename --short).deb && \
+    apt install -y -V ./apache-arrow-apt-source-latest-$(lsb_release --codename --short).deb && \
+    apt update
+
+# Install system packages
+RUN apt install -y \
+    curl \
+    gpg \
+    git \
+    vim \
+    wget \
+    cmake \
+    bedtools \
+    btop
+
+# Install system libraries
+RUN apt install -y \
+    python3 python3-pip python3-dev \
+    libboost-all-dev libthrift-dev libsnappy-dev \
+    libarrow-dev libarrow-dataset-dev libparquet-dev libarrow-flight-dev \
+    libncurses-dev libbz2-dev liblzma-dev
+
+# Mount points
+RUN mkdir -p /data /zata

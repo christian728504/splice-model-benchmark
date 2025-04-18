@@ -1,0 +1,11 @@
+*.zarr
+*.h5
+*.gtf
+*.gz
+*.parquet
+*.fasta*
+*.tsv
+*.csv
+*.sif
+
+__pycache__
