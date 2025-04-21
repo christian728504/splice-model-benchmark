@@ -3,9 +3,13 @@
 *.gtf
 *.gz
 *.parquet
-*.fasta*
+*.fasta
+*.fai
+*.fa
 *.tsv
 *.csv
 *.sif
+*.ckpt
+final*
 
 __pycache__

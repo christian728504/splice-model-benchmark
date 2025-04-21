@@ -1,6 +1,7 @@
 import os
+os.environ["XLA_PYTHON_CLIENT_MEM_FRACTION"] = ".95"
+
 import zarr
-import sys
 import jax
 import numpy as np
 import polars as pl
@@ -14,23 +15,19 @@ from tqdm import tqdm
 from Bio.Seq import Seq
 from urllib.request import urlretrieve
 
-from preprocess.make_fasta import make_fasta
-
 class SegmentNTEvaluator:
     def __init__(self,
                  gencode_gtf: str = "reference_files/gencode.v29.primary_assembly.annotation_UCSC_names.gtf.parquet",
                  transcript_quantifications: tuple = ('reference_files/transcript_quantifications_rep1.tsv', 'reference_files/transcript_quantifications_rep2.tsv'),
                  consensus_fasta: str = 'reference_files/GM12878.fasta',
                  sequence_length: int = 30000,
-                 batch_size: int = 4,
+                 batch_size: int = 3,
                  transcript_count_threshold: int = 2,
                  filter_transcripts: bool = True,
-                 predicitons_path: str = 'results/segmentnt_predicitons.zarr',
+                 predicitons_path: str = 'results/segmentnt_predictions.zarr',
                  aurpc_plot_path: str = 'results/segmentnt.png'):
         self.gtf_file = gencode_gtf
         self.consensus_fasta = consensus_fasta
-        if not os.path.exists(self.consensus_fasta):
-            make_fasta()
         self.transcript_quantifications = transcript_quantifications
         if not os.path.exists(self.transcript_quantifications[0]):
             urlretrieve("https://www.encodeproject.org/files/ENCFF971DVB/@@download/ENCFF971DVB.tsv", self.transcript_quantifications[0])
@@ -131,17 +128,17 @@ class SegmentNTEvaluator:
             for row in chrom_df.iter_rows(named=True):
                 if row['strand'] == '+':
                     if row['start'] != "EXCLUDE":
-                        all_splice_site_data.append(('acceptor', chrom, int(row['start']) - 1, '+'))
+                        all_splice_site_data.append((chrom, int(row['start']) - 1, '+'))
                         acceptor_sites[int(row['start']) - 1] = 1
                     if row['end'] != "EXCLUDE":
-                        all_splice_site_data.append(('donor', chrom, int(row['end']) - 1, '+'))
+                        all_splice_site_data.append((chrom, int(row['end']) - 1, '+'))
                         donor_sites[int(row['end']) - 1] = 1
                 else:
                     if row['start'] != "EXCLUDE":
-                        all_splice_site_data.append(('donor', chrom, int(row['start']) - 1, '-'))
+                        all_splice_site_data.append((chrom, int(row['start']) - 1, '-'))
                         donor_sites[int(row['start']) - 1] = 1
                     if row['end'] != "EXCLUDE":
-                        all_splice_site_data.append(('acceptor', chrom, int(row['end']) - 1, '-'))
+                        all_splice_site_data.append((chrom, int(row['end']) - 1, '-'))
                         acceptor_sites[int(row['end']) - 1] = 1
                         
             if chrom not in self._acceptor_truth and chrom not in self._donor_truth:
@@ -152,7 +149,6 @@ class SegmentNTEvaluator:
 
         # Create structured array for splice site metadata
         splice_site_dtype = np.dtype([
-            ('type', 'U10'),
             ('chrom', 'U10'),
             ('index', np.int64),
             ('strand', 'U1')
@@ -166,64 +162,16 @@ class SegmentNTEvaluator:
 
         print("Done")
             
-    
     def _process_batch(self, batch, args):
         """Process a batch of sequences and update predictions for entire windows."""
         parameters, apply_fn, tokenizer, keys, donor_idx, acceptor_idx = args
         sequences = list(batch.values())
         tokens_ids = [b[1] for b in tokenizer.batch_tokenize(sequences)]
-        tokens = jnp.stack([jnp.asarray(tokens_ids, dtype=jnp.int32)], axis=0)
+        tokens = jnp.asarray(tokens_ids, dtype=jnp.int32)
         outputs = apply_fn(parameters, keys, tokens)
         probabilities = jax.nn.softmax(outputs["logits"], axis=-1)[..., -1]
         
         for i, (chrom, index, strand) in enumerate(batch.keys()):
-            # donor_window = np.array(probabilities[0, i, :, donor_idx])
-            # acceptor_window = np.array(probabilities[0, i, :, acceptor_idx])
-            
-            # if strand == '-':
-            #     acceptor_window = acceptor_window[::-1]
-            #     donor_window = donor_window[::-1]
-            
-            # half_window = self.sequence_length // 2
-            # window_start = index - half_window
-            
-            # self._acceptor_predictions[chrom][window_start:window_start+self.sequence_length] = acceptor_window
-            # self._donor_predictions[chrom][window_start:window_start+self.sequence_length] = donor_window
-            
-            ######
-            
-            # donor_window = np.array(probabilities[0, i, :, donor_idx])
-            # acceptor_window = np.array(probabilities[0, i, :, acceptor_idx])
-            
-            # if strand == '-':
-            #     acceptor_window = acceptor_window[::-1]
-            #     donor_window = donor_window[::-1]
-            
-            # half_window = self.sequence_length // 2
-            # window_start = index - half_window
-            # window_end = window_start + self.sequence_length
-            
-            # acceptor_mask = self._acceptor_predictions[chrom][window_start:window_end] != 0
-            # donor_mask = self._donor_predictions[chrom][window_start:window_end] != 0
-            
-            # current_acceptor = self._acceptor_predictions[chrom][window_start:window_end]
-            # current_donor = self._donor_predictions[chrom][window_start:window_end]
-            
-            # alpha = 0.5
-            
-            # if np.any(acceptor_mask):
-            #     current_acceptor[acceptor_mask] = current_acceptor[acceptor_mask] * (1-alpha) + acceptor_window[acceptor_mask] * alpha
-            # if np.any(donor_mask):
-            #     current_donor[donor_mask] = current_donor[donor_mask] * (1-alpha) + donor_window[donor_mask] * alpha
-            
-            # current_acceptor[np.logical_not(acceptor_mask)] = acceptor_window[np.logical_not(acceptor_mask)]
-            # current_donor[np.logical_not(donor_mask)] = donor_window[np.logical_not(donor_mask)]
-            
-            # self._acceptor_predictions[chrom][window_start:window_end] = current_acceptor
-            # self._donor_predictions[chrom][window_start:window_end] = current_donor
-            
-            ######
-            
             half_total = self.sequence_length // 2
             window_start = index - half_total
             relative_pos = index - window_start
@@ -233,13 +181,13 @@ class SegmentNTEvaluator:
             else:
                 center_pos = relative_pos
             
-            donor_pred = np.array(probabilities[0, i, center_pos, donor_idx])
-            acceptor_pred = np.array(probabilities[0, i, center_pos, acceptor_idx])
+            donor_pred = np.array(probabilities[i, center_pos, donor_idx])
+            acceptor_pred = np.array(probabilities[i, center_pos, acceptor_idx])
             
             self._acceptor_predictions[chrom][index] = acceptor_pred
             self._donor_predictions[chrom][index] = donor_pred
-                        
-
+    
+    
     def generate_segmentnt_predictions(self):
         """Generate SegmentNT predictions for all splice sites."""
         fasta = Fasta(self.consensus_fasta)
@@ -269,11 +217,11 @@ class SegmentNTEvaluator:
         )
         forward_fn = hk.transform(forward_fn)
         
-        devices = jax.devices("gpu")[1:2]
-        apply_fn = jax.pmap(forward_fn.apply, devices=devices)
+        device = jax.devices("gpu")[0]
+        apply_fn = forward_fn.apply
         random_key = jax.random.PRNGKey(seed=0)
-        keys = jax.device_put_replicated(random_key, devices=devices)
-        parameters = jax.device_put_replicated(parameters, devices=devices)
+        keys = jax.device_put(random_key, device=device)
+        parameters = jax.device_put(parameters, device=device)
         donor_idx = config.features.index('splice_donor')
         acceptor_idx = config.features.index('splice_acceptor')
             

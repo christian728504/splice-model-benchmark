@@ -1,9 +1,7 @@
 import os
-os.environ["CUDA_VISIBLE_DEVICES"] = "0"
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = "0"
 
 import zarr
-import sys
 import numpy as np
 import polars as pl
 from pyfaidx import Fasta
@@ -15,25 +13,22 @@ from Bio.Seq import Seq
 from urllib.request import urlretrieve
 
 from utils import one_hot_encode
-from preprocess.make_fasta import make_fasta
 
 class SpliceAIEvaluator:
     def __init__(self,
                  gencode_gtf: str = "reference_files/gencode.v29.primary_assembly.annotation_UCSC_names.gtf.parquet",
                  transcript_quantifications: tuple = ('reference_files/transcript_quantifications_rep1.tsv', 'reference_files/transcript_quantifications_rep2.tsv'),
                  consensus_fasta: str = 'reference_files/GM12878.fasta',
-                 model_weights: str = "reference_files/models/spliceai{index}.h5",
+                 model_weights: str = "reference_files/spliceai/models/spliceai{index}.h5",
                  sequence_length: int = 5000,
                  context_length: int = 10000,
                  batch_size: int = 128,
                  transcript_count_threshold: int = 2,
                  filter_transcripts: bool = True,
-                 predicitons_path: str = 'results/spliceai_predicitons.zarr',
+                 predicitons_path: str = 'results/spliceai_predictions.zarr',
                  aurpc_plot_path: str = 'results/spliceai.png'):
         self.gtf_file = gencode_gtf
         self.consensus_fasta = consensus_fasta
-        if not os.path.exists(self.consensus_fasta):
-            make_fasta()
         self.transcript_quantifications = transcript_quantifications
         if not os.path.exists(self.transcript_quantifications[0]):
             urlretrieve("https://www.encodeproject.org/files/ENCFF971DVB/@@download/ENCFF971DVB.tsv", self.transcript_quantifications[0])
@@ -54,7 +49,6 @@ class SpliceAIEvaluator:
         self._donor_predictions = self._zarr_root.require_group('donor_predictions')
         self._acceptor_truth = self._zarr_root.require_group('acceptor_truth')
         self._donor_truth = self._zarr_root.require_group('donor_truth')
-        self._metrics = None
 
 
     def _filter_gencode(self):
@@ -136,17 +130,17 @@ class SpliceAIEvaluator:
             for row in chrom_df.iter_rows(named=True):
                 if row['strand'] == '+':
                     if row['start'] != "EXCLUDE":
-                        all_splice_site_data.append(('acceptor', chrom, int(row['start']) - 1, '+'))
+                        all_splice_site_data.append((chrom, int(row['start']) - 1, '+'))
                         acceptor_sites[int(row['start']) - 1] = 1
                     if row['end'] != "EXCLUDE":
-                        all_splice_site_data.append(('donor', chrom, int(row['end']) - 1, '+'))
+                        all_splice_site_data.append((chrom, int(row['end']) - 1, '+'))
                         donor_sites[int(row['end']) - 1] = 1
                 else:
                     if row['start'] != "EXCLUDE":
-                        all_splice_site_data.append(('donor', chrom, int(row['start']) - 1, '-'))
+                        all_splice_site_data.append((chrom, int(row['start']) - 1, '-'))
                         donor_sites[int(row['start']) - 1] = 1
                     if row['end'] != "EXCLUDE":
-                        all_splice_site_data.append(('acceptor', chrom, int(row['end']) - 1, '-'))
+                        all_splice_site_data.append((chrom, int(row['end']) - 1, '-'))
                         acceptor_sites[int(row['end']) - 1] = 1
                         
             if chrom not in self._acceptor_truth and chrom not in self._donor_truth:
@@ -157,7 +151,6 @@ class SpliceAIEvaluator:
 
         # Create structured array for splice site metadata
         splice_site_dtype = np.dtype([
-            ('type', 'U10'),
             ('chrom', 'U10'),
             ('index', np.int64),
             ('strand', 'U1')
@@ -189,18 +182,20 @@ class SpliceAIEvaluator:
         avg_preds = np.mean(predictions, axis=0)  # Shape: (batch_size, sequence_length, 3)
         
         for i, (chrom, index, strand) in enumerate(batch.keys()):
-            acceptor_window = avg_preds[i, :, 1]  # 1: Acceptor
-            donor_window = avg_preds[i, :, 2]     # 2: Donor
+            half_total = self.sequence_length // 2
+            window_start = index - half_total
+            relative_pos = index - window_start
             
             if strand == '-':
-                acceptor_window = acceptor_window[::-1]
-                donor_window = donor_window[::-1]
+                center_pos = self.sequence_length - 1 - relative_pos
+            else:
+                center_pos = relative_pos
             
-            half_window = self.sequence_length // 2
-            window_start = index - half_window
+            acceptor_pred = avg_preds[i, center_pos, 1]  # 1: Acceptor
+            donor_pred = avg_preds[i, center_pos, 2]     # 2: Donor
             
-            self._acceptor_predictions[chrom][window_start:window_start+self.sequence_length] = acceptor_window
-            self._donor_predictions[chrom][window_start:window_start+self.sequence_length] = donor_window
+            self._acceptor_predictions[chrom][index] = acceptor_pred
+            self._donor_predictions[chrom][index] = donor_pred
                         
 
     def generate_spliceai_predictions(self):
@@ -234,10 +229,6 @@ class SpliceAIEvaluator:
             window_start = max(0, index - half_total)
             window_end = min(len(fasta[chrom]), index + half_total)
             seq = str(fasta[chrom][window_start:window_end])
-            
-            pad_left = max(0, half_total - (index - window_start))
-            pad_right = max(0, half_total - (window_end - index))
-            seq = 'N' * pad_left + seq + 'N' * pad_right
             
             if strand == '-':
                 seq = str(Seq(seq).reverse_complement())

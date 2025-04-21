@@ -1,25 +1,41 @@
-# from models.spliceai import SpliceAIEvaluator
+from utils import run_with_logging
 
-# def main():
-#     evaluator = SpliceAIEvaluator(
-#         aurpc_plot_path="results/spliceai_gtf_v29_nofilter.png",
-#         gencode_gtf="reference_files/gencode.v29.basic.annotation.gtf.parquet",
-#         filter_transcripts=False
-#     )
-#     evaluator.get_ground_truth()
-#     evaluator.generate_spliceai_predictions()
-#     evaluator.calculate_and_plot_metrics()
+def run_spliceai():
+    from models.spliceai import SpliceAIEvaluator
+    evaluator = SpliceAIEvaluator()
+    evaluator.get_ground_truth()
+    evaluator.generate_spliceai_predictions()
+    evaluator.calculate_and_plot_metrics()
 
-from models.segmentnt import SegmentNTEvaluator
-
-def main():
-    evaluator = SegmentNTEvaluator(
-        aurpc_plot_path="results/segmentnt_siteonly.png",
-        consensus_fasta="reference_files/GCA_000001405.15_GRCh38_no_alt_analysis_set.fasta"
-    )
+def run_segmentnt():
+    from models.segmentnt import SegmentNTEvaluator
+    evaluator = SegmentNTEvaluator()
     evaluator.get_ground_truth()
     evaluator.generate_segmentnt_predictions()
     evaluator.calculate_and_plot_metrics()
+
+def run_splicetransformer():
+    from models.sptransform import SpliceTransformerEvaluator
+    evaluator = SpliceTransformerEvaluator()
+    evaluator.get_ground_truth()
+    evaluator.generate_sptransformer_predictions()
+    evaluator.calculate_and_plot_metrics()
+    
+def run_pangolin():
+    from models.pangolin import PangolinEvaluator
+    evaluator = PangolinEvaluator()
+    # evaluator.get_ground_truth()
+    # evaluator.generate_pangolin_predictions()
+    evaluator.calculate_and_plot_metrics()
+
+def main():
+    """Run evaluation methods for models (only run one at a time)"""
+    # run_with_logging(run_spliceai, "spliceai.log")
+    # run_with_logging(run_segmentnt, "segmentnt.log")
+    # run_with_logging(run_splicetransformer, "sptransformer.log")
+    run_with_logging(run_pangolin, "pangolin.log")
+    
+    print("All evaluations completed!")
 
 if __name__ == "__main__":
     main()

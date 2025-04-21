@@ -7,6 +7,7 @@ requires-python = ">=3.10"
 dependencies = [
     "biopython>=1.85",
     "dm-haiku>=0.0.13",
+    "gffutils>=0.13",
     "gtfparse>=2.5.0",
     "ipykernel>=6.29.5",
     "jax[cuda12-pip]>=0.4.35",
@@ -14,13 +15,21 @@ dependencies = [
     "nucleotide-transformer",
     "numpy<2",
     "pandas>=2.2.3",
+    "pangolin",
     "polars>=0.20.31",
+    "pyensembl>=2.3.13",
     "pyfaidx>=0.8.1.3",
+    "pyvcf3>=1.0.3",
     "scikit-learn>=1.6.1",
+    "sinkhorn-transformer>=0.11.4",
     "tensorflow[and-cuda]>=2.18.1",
+    "torch>=2.0.1",
+    "torchaudio>=2.0.2",
+    "torchvision>=0.15.2",
     "tqdm>=4.67.1",
     "zarr>=2.18.3",
 ]
 
 [tool.uv.sources]
 nucleotide-transformer = { git = "https://github.com/instadeepai/nucleotide-transformer", rev = "main" }
+pangolin = { git = "https://github.com/tkzeng/Pangolin.git", rev = "main" }
