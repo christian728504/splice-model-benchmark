@@ -25,7 +25,7 @@ class SegmentNTEvaluator:
                  transcript_count_threshold: int = 2,
                  filter_transcripts: bool = True,
                  predicitons_path: str = 'results/segmentnt_predictions.zarr',
-                 aurpc_plot_path: str = 'results/segmentnt.png'):
+                 aurpc_plot_path: str = 'results/segmentnt.svg'):
         self.gtf_file = gencode_gtf
         self.consensus_fasta = consensus_fasta
         self.transcript_quantifications = transcript_quantifications
@@ -128,17 +128,17 @@ class SegmentNTEvaluator:
             for row in chrom_df.iter_rows(named=True):
                 if row['strand'] == '+':
                     if row['start'] != "EXCLUDE":
-                        all_splice_site_data.append((chrom, int(row['start']) - 1, '+'))
+                        all_splice_site_data.append(('acceptor', chrom, int(row['start']) - 1, '+'))
                         acceptor_sites[int(row['start']) - 1] = 1
                     if row['end'] != "EXCLUDE":
-                        all_splice_site_data.append((chrom, int(row['end']) - 1, '+'))
+                        all_splice_site_data.append(('donor',chrom, int(row['end']) - 1, '+'))
                         donor_sites[int(row['end']) - 1] = 1
                 else:
                     if row['start'] != "EXCLUDE":
-                        all_splice_site_data.append((chrom, int(row['start']) - 1, '-'))
+                        all_splice_site_data.append(('donor',chrom, int(row['start']) - 1, '-'))
                         donor_sites[int(row['start']) - 1] = 1
                     if row['end'] != "EXCLUDE":
-                        all_splice_site_data.append((chrom, int(row['end']) - 1, '-'))
+                        all_splice_site_data.append(('acceptor', chrom, int(row['end']) - 1, '-'))
                         acceptor_sites[int(row['end']) - 1] = 1
                         
             if chrom not in self._acceptor_truth and chrom not in self._donor_truth:
@@ -149,6 +149,7 @@ class SegmentNTEvaluator:
 
         # Create structured array for splice site metadata
         splice_site_dtype = np.dtype([
+            ('type', 'U10'),
             ('chrom', 'U10'),
             ('index', np.int64),
             ('strand', 'U1')
@@ -161,6 +162,7 @@ class SegmentNTEvaluator:
             print("Splice site metadata array already exists in dataset")
 
         print("Done")
+        
             
     def _process_batch(self, batch, args):
         """Process a batch of sequences and update predictions for entire windows."""
@@ -170,22 +172,35 @@ class SegmentNTEvaluator:
         tokens = jnp.asarray(tokens_ids, dtype=jnp.int32)
         outputs = apply_fn(parameters, keys, tokens)
         probabilities = jax.nn.softmax(outputs["logits"], axis=-1)[..., -1]
-        
+            
         for i, (chrom, index, strand) in enumerate(batch.keys()):
-            half_total = self.sequence_length // 2
-            window_start = index - half_total
-            relative_pos = index - window_start
+            # donor_window = np.array(probabilities[i, :, donor_idx])
+            # acceptor_window = np.array(probabilities[i, :, acceptor_idx])
+            donor_window = np.array(probabilities[i, 12500:17500, donor_idx])
+            acceptor_window = np.array(probabilities[i, 12500:17500, acceptor_idx])
             
-            if strand == '-':
-                center_pos = self.sequence_length - 1 - relative_pos
-            else:
-                center_pos = relative_pos
+            # half_window = self.sequence_length // 2
+            half_window = 5000 // 2 # Testing to see if a fixed window size works better then the entire prediction window
+            window_start = index - half_window
+            # window_end = window_start + self.sequence_length
+            window_end = window_start + 5000
             
-            donor_pred = np.array(probabilities[i, center_pos, donor_idx])
-            acceptor_pred = np.array(probabilities[i, center_pos, acceptor_idx])
+            acceptor_mask = self._acceptor_predictions[chrom][window_start:window_end] != 0
+            donor_mask = self._donor_predictions[chrom][window_start:window_end] != 0
+            current_acceptor = self._acceptor_predictions[chrom][window_start:window_end]
+            current_donor = self._donor_predictions[chrom][window_start:window_end]
             
-            self._acceptor_predictions[chrom][index] = acceptor_pred
-            self._donor_predictions[chrom][index] = donor_pred
+            alpha = 0.5
+            
+            if np.any(acceptor_mask):
+                current_acceptor[acceptor_mask] = current_acceptor[acceptor_mask] * (1-alpha) + acceptor_window[acceptor_mask] * alpha
+            if np.any(donor_mask):
+                current_donor[donor_mask] = current_donor[donor_mask] * (1-alpha) + donor_window[donor_mask] * alpha
+            current_acceptor[np.logical_not(acceptor_mask)] = acceptor_window[np.logical_not(acceptor_mask)]
+            current_donor[np.logical_not(donor_mask)] = donor_window[np.logical_not(donor_mask)]
+            
+            self._acceptor_predictions[chrom][window_start:window_end] = current_acceptor
+            self._donor_predictions[chrom][window_start:window_end] = current_donor
     
     
     def generate_segmentnt_predictions(self):
@@ -241,9 +256,6 @@ class SegmentNTEvaluator:
             window_end = min(len(fasta[chrom]), index + half_total)
             seq = str(fasta[chrom][window_start:window_end])
             
-            if strand == '-':
-                seq = str(Seq(seq).reverse_complement())
-            
             batch_key = (chrom, index, strand)
             
             batch[batch_key] = seq
@@ -260,47 +272,74 @@ class SegmentNTEvaluator:
         """
         Calculate AUPRC and other metrics using only regions where predictions were made.
         """
-        args = [(self._acceptor_predictions, self._acceptor_truth, "acceptor"), (self._donor_predictions, self._donor_truth, "donor")]
+        args = [(self._acceptor_predictions, self._acceptor_truth, "acceptor"), 
+                (self._donor_predictions, self._donor_truth, "donor")]
+        metadata = self._splice_sites['metadata'][:]
         
-        for arg in args:
-            masked_truth = []
-            masked_preds = []
-            for chrom in self.target_chromosomes:
-                chrom_predictions = np.array(arg[0][chrom])
-                chrom_ground_truth = np.array(arg[1][chrom])
-                predictions_mask = chrom_predictions != 0
-                masked_truth.append(chrom_ground_truth[predictions_mask])
-                masked_preds.append(chrom_predictions[predictions_mask])
+        results = {}
+        
+        for pred_dataset, truth_dataset, site_type in args:    
+            type_metadata = metadata[metadata['type'] == site_type]
+            # window_size = self.sequence_length
+            window_size = 5000
+            total_sites = len(type_metadata)
+            total_size = total_sites * window_size
+            
+            ground_truth = np.zeros(total_size, dtype=np.int8)
+            predictions = np.zeros(total_size, dtype=np.float64)
 
-            ground_truth = np.concatenate(masked_truth)
-            predictions = np.concatenate(masked_preds)
+            current_idx = 0
+            for site in tqdm(type_metadata, desc="Extracting prediciton and truth windows", miniters=1000):
+                index = site['index']
+                chrom = site['chrom']
+                
+                # half_window = self.sequence_length // 2
+                half_window = 5000 // 2
+                window_start = index - half_window
+                # window_end = window_start + self.sequence_length
+                window_end = window_start + 5000
+                
+                site_prediction = pred_dataset[chrom][window_start:window_end]
+                site_truth = truth_dataset[chrom][window_start:window_end]
+                
+                # predictions[current_idx:current_idx+self.sequence_length] = site_prediction
+                # ground_truth[current_idx:current_idx+self.sequence_length] = site_truth
+                # current_idx += self.sequence_length
+                
+                predictions[current_idx:current_idx+5000] = site_prediction
+                ground_truth[current_idx:current_idx+5000] = site_truth
+                current_idx += 5000
             
             precision, recall, _ = precision_recall_curve(ground_truth, predictions)
             auprc = auc(recall, precision)
-
+            
             k = int(np.sum(ground_truth))
             top_k_indices = np.argsort(predictions)[-k:]
             top_k_accuracy = np.sum(ground_truth[top_k_indices]) / k
             
-            if arg[2] == "acceptor":
-                acc_precision, acc_recall, acc_auprc, acc_topk = precision, recall, auprc, top_k_accuracy
-            else:
-                don_precision, don_recall, don_auprc, don_topk = precision, recall, auprc, top_k_accuracy
+            results[site_type] = {
+                'precision': precision,
+                'recall': recall,
+                'auprc': auprc,
+                'topk': top_k_accuracy
+            }
         
-        mean_auprc = (acc_auprc + don_auprc) / 2
-        mean_topk = (acc_topk + don_topk) / 2
-
+        mean_auprc = (results['acceptor']['auprc'] + results['donor']['auprc']) / 2
+        mean_topk = (results['acceptor']['topk'] + results['donor']['topk']) / 2
+        
         plt.figure(figsize=(10, 6))
-        plt.plot(acc_recall, acc_precision, label=f'Acceptor (AUPRC={acc_auprc:.3f})')
-        plt.plot(don_recall, don_precision, label=f'Donor (AUPRC={don_auprc:.3f})')
+        plt.plot(results['acceptor']['recall'], results['acceptor']['precision'], 
+                label=f'Acceptor (AUPRC={results["acceptor"]["auprc"]:.3f})')
+        plt.plot(results['donor']['recall'], results['donor']['precision'], 
+                label=f'Donor (AUPRC={results["donor"]["auprc"]:.3f})')
         plt.xlabel('Recall')
         plt.ylabel('Precision')
         plt.title(f'Precision-Recall Curves\nMean AUPRC: {mean_auprc:.3f}, Mean Top-k: {mean_topk:.3f}')
         plt.legend()
         plt.grid(True)
-        plt.savefig(self.aurpc_plot_path, dpi=300)
-
-        print(f"Acceptor AUPRC: {acc_auprc:.4f}, Top-k: {acc_topk:.4f}")
-        print(f"Donor AUPRC: {don_auprc:.4f}, Top-k: {don_topk:.4f}")
+        plt.savefig(self.aurpc_plot_path, dpi=300, format='svg')
+        
+        print(f"Acceptor AUPRC: {results['acceptor']['auprc']:.4f}, Top-k: {results['acceptor']['topk']:.4f}")
+        print(f"Donor AUPRC: {results['donor']['auprc']:.4f}, Top-k: {results['donor']['topk']:.4f}")
         print(f"Mean AUPRC: {mean_auprc:.4f}, Mean Top-k: {mean_topk:.4f}")
             

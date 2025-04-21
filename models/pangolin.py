@@ -24,7 +24,7 @@ class PangolinEvaluator:
                  transcript_count_threshold: int = 2,
                  filter_transcripts: bool = True,
                  predicitons_path: str = 'results/pangolin_predictions.zarr',
-                 aurpc_plot_path: str = 'results/pangolin.png'):
+                 aurpc_plot_path: str = 'results/pangolin.svg'):
         self.gtf_file = gencode_gtf
         self.consensus_fasta = consensus_fasta
         self.transcript_quantifications = transcript_quantifications
@@ -183,19 +183,25 @@ class PangolinEvaluator:
             model_type_predictions[model_num] = np.mean(group_predictions, axis=0)
         
         for i, (chrom, index, strand) in enumerate(batch.keys()):
-            half_total = self.sequence_length // 2
-            window_start = index - half_total
-            relative_pos = index - window_start
+            splice_site_window = np.mean([model_type_predictions[model_num][i, :] for model_num in model_nums], axis=0)
             
             if strand == '-':
-                center_pos = self.sequence_length - 1 - relative_pos
-            else:
-                center_pos = relative_pos
+                splice_site_window = np.flip(splice_site_window)
             
-            final_pred = np.mean([model_type_predictions[model_num][i, center_pos] for model_num in model_nums])
+            half_window = self.sequence_length // 2
+            window_start = index - half_window
+            window_end = window_start + self.sequence_length
             
-            self._splice_site_predictions[chrom][index] = final_pred
+            splice_site_mask = self._splice_site_predictions[chrom][window_start:window_end] != 0
+            current_splice_site = self._splice_site_predictions[chrom][window_start:window_end]
             
+            alpha = 0.5
+            if np.any(splice_site_mask):
+                current_splice_site[splice_site_mask] = current_splice_site[splice_site_mask] * (1-alpha) + splice_site_window[splice_site_mask] * alpha
+            current_splice_site[np.logical_not(splice_site_mask)] = splice_site_window[np.logical_not(splice_site_mask)]
+            
+            self._splice_site_predictions[chrom][window_start:window_end] = current_splice_site
+                    
 
     def generate_pangolin_predictions(self):
         """Generate Pangolin predictions for all splice sites."""
@@ -253,18 +259,31 @@ class PangolinEvaluator:
         """
         Calculate AUPRC and other metrics using only regions where predictions were made.
         """
-        
-        ground_truth = np.array([], dtype=np.int8)
-        predictions = np.array([], dtype=np.float64)
         metadata = self._splice_sites['metadata'][:]
-        for site in metadata:
-            chrom = site['chrom']
+        window_size = self.sequence_length
+        total_sites = len(metadata)
+        total_size = total_sites * window_size
+        
+        ground_truth = np.zeros(total_size, dtype=np.int8)
+        predictions = np.zeros(total_size, dtype=np.float64)
+        
+        current_idx = 0
+        for site in tqdm(metadata, desc="Extracting prediciton and truth windows", miniters=1000):
             index = site['index']
-            site_prediction = self._splice_site_predictions[chrom][index]
-            site_truth = self._splice_site_truth[chrom][index]
-            predictions = np.append(predictions, site_prediction)
-            ground_truth = np.append(ground_truth, site_truth)
+            chrom = site['chrom']
             
+            half_window = self.sequence_length // 2
+            window_start = index - half_window
+            window_end = window_start + self.sequence_length
+            
+            site_prediction = self._splice_site_predictions[chrom][window_start:window_end]
+            site_truth = self._splice_site_truth[chrom][window_start:window_end]
+            
+            predictions[current_idx:current_idx+self.sequence_length] = site_prediction
+            ground_truth[current_idx:current_idx+self.sequence_length] = site_truth
+            current_idx += self.sequence_length
+            
+        print("Calculating AUPRC and top-k accuracy...")
         precision, recall, _ = precision_recall_curve(ground_truth, predictions)
         auprc = auc(recall, precision)
 
@@ -278,7 +297,7 @@ class PangolinEvaluator:
         plt.ylabel('Precision')
         plt.title(f'Precision-Recall Curves\nAURPC: {auprc:.3f}, Top-k: {topk:.3f}')
         plt.grid(True)
-        plt.savefig(self.aurpc_plot_path, dpi=300)
+        plt.savefig(self.aurpc_plot_path, dpi=300, format='svg')
 
         print(f"AUPRC: {auprc:.4f}, Top-k: {topk:.4f}")
             
