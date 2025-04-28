@@ -1,5 +1,4 @@
 import numpy as np
-from contextlib import redirect_stdout, redirect_stderr
 
 def one_hot_encode(sequences):
     sequence_length = len(sequences[0])
@@ -18,9 +17,3 @@ def one_hot_encode(sequences):
         encoding[i, np.arange(len(seq))[valid_bases], indices[valid_bases]] = 1
         
     return encoding
-
-def run_with_logging(func, log_file):
-    """Run a function with stdout and stderr redirected to a log file."""
-    with open(log_file, 'w') as f:
-        with redirect_stdout(f), redirect_stderr(f):
-            func()

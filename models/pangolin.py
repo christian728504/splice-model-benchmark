@@ -79,35 +79,30 @@ class PangolinEvaluator:
         )
         print(f"Number of transcripts per chromsome: {transcript_counts}")
         
-        as_string = filtered_df.with_columns(pl.col('start').cast(pl.Utf8), pl.col('end').cast(pl.Utf8))
-        as_num = as_string.with_columns(pl.col('exon_number').cast(pl.Int64))
-        indexed_df = as_num.with_row_index()
+        with_start = filtered_df.with_columns(
+            pl.lit('start').alias('pos_type'),
+            pl.col('start').alias('pos'))
+        with_end = filtered_df.with_columns(
+            pl.lit('end').alias('pos_type'),
+            pl.col('end').alias('pos')
+        )
+
+        concatenated = pl.concat([with_start, with_end])
+        drop_start_and_end = concatenated.drop('start', 'end')
+        exon_number_as_int = drop_start_and_end.with_columns(pl.col('exon_number').cast(pl.Int64))
+        sorted_df = exon_number_as_int.sort('seqname', 'transcript_id', 'exon_number', 'pos')
+
+        grouped = sorted_df.group_by('seqname', 'transcript_id').agg(pl.col('pos'))
+        remove_single_exons = grouped.filter(pl.col('pos').list.len() > 2)
+        removed_start_and_end = remove_single_exons.with_columns(
+            pl.col("pos").list.slice(1, pl.col("pos").list.len() - 2)
+            .alias("pos")
+        )
+
+        exploded_df = removed_start_and_end.explode('pos')
+        joined_df = sorted_df.join(exploded_df, on=['seqname', 'transcript_id', 'pos'], how='inner').drop('index').with_row_index()
         
-        first_indices = []
-        last_indices = []
-
-        for _, group in indexed_df.group_by('transcript_id'):
-            sorted_group = group.sort('exon_number')
-            first_indices.append(sorted_group.row(0, named=True)['index'])
-            last_indices.append(sorted_group.row(-1, named=True)['index'])
-
-        # Create update expressions
-        placeholder_df = indexed_df.with_columns([
-            pl.when(pl.col("index").is_in(first_indices))
-            .then(pl.lit("EXCLUDE"))
-            .otherwise(pl.col("start"))
-            .alias("start"),
-            
-            pl.when(pl.col("index").is_in(last_indices))
-            .then(pl.lit("EXCLUDE"))
-            .otherwise(pl.col("end"))
-            .alias("end")
-        ])
-
-        sorted_df = placeholder_df.sort('seqname', 'transcript_id', 'exon_number')
-        print(f"Done")
-        
-        return sorted_df
+        return joined_df
     
     
     def get_ground_truth(self):
@@ -123,19 +118,19 @@ class PangolinEvaluator:
             
             for row in chrom_df.iter_rows(named=True):
                 if row['strand'] == '+':
-                    if row['start'] != "EXCLUDE":
-                        all_splice_site_data.append((chrom, int(row['start']) - 1, '+'))
-                        splice_sites[int(row['start']) - 1] = 1
-                    if row['end'] != "EXCLUDE":
-                        all_splice_site_data.append((chrom, int(row['end']) - 1, '+'))
-                        splice_sites[int(row['end']) - 1] = 1
+                    if row['pos_type'] != 'start':
+                        all_splice_site_data.append((chrom, int(row['pos']) - 1, '+'))
+                        splice_sites[int(row['pos']) - 1] = 1
+                    else:
+                        all_splice_site_data.append((chrom, int(row['pos']) - 1, '+'))
+                        splice_sites[int(row['pos']) - 1] = 1
                 else:
-                    if row['start'] != "EXCLUDE":
-                        all_splice_site_data.append((chrom, int(row['start']) - 1, '-'))
-                        splice_sites[int(row['start']) - 1] = 1
-                    if row['end'] != "EXCLUDE":
-                        all_splice_site_data.append((chrom, int(row['end']) - 1, '-'))
-                        splice_sites[int(row['end']) - 1] = 1
+                    if row['pos_type'] != 'end':
+                        all_splice_site_data.append((chrom, int(row['pos']) - 1, '-'))
+                        splice_sites[int(row['pos']) - 1] = 1
+                    else:
+                        all_splice_site_data.append((chrom, int(row['pos']) - 1, '-'))
+                        splice_sites[int(row['pos']) - 1] = 1
             
             if chrom not in self._splice_site_truth:
                 self._splice_site_truth.create_dataset(chrom, data=splice_sites, dtype=np.uint8)

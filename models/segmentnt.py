@@ -12,7 +12,6 @@ from nucleotide_transformer.pretrained import get_pretrained_segment_nt_model
 from sklearn.metrics import precision_recall_curve, auc
 from matplotlib import pyplot as plt
 from tqdm import tqdm
-from Bio.Seq import Seq
 from urllib.request import urlretrieve
 
 class SegmentNTEvaluator:
@@ -127,19 +126,19 @@ class SegmentNTEvaluator:
 
             for row in chrom_df.iter_rows(named=True):
                 if row['strand'] == '+':
-                    if row['start'] != "EXCLUDE":
-                        all_splice_site_data.append(('acceptor', chrom, int(row['start']) - 1, '+'))
-                        acceptor_sites[int(row['start']) - 1] = 1
-                    if row['end'] != "EXCLUDE":
-                        all_splice_site_data.append(('donor',chrom, int(row['end']) - 1, '+'))
-                        donor_sites[int(row['end']) - 1] = 1
+                    if row['pos_type'] == 'start':
+                        all_splice_site_data.append(('acceptor', chrom, int(row['pos']) - 1, '+'))
+                        acceptor_sites[int(row['pos']) - 1] = 1
+                    else:
+                        all_splice_site_data.append(('donor',chrom, int(row['pos']) - 1, '+'))
+                        donor_sites[int(row['pos']) - 1] = 1
                 else:
-                    if row['start'] != "EXCLUDE":
-                        all_splice_site_data.append(('donor',chrom, int(row['start']) - 1, '-'))
-                        donor_sites[int(row['start']) - 1] = 1
-                    if row['end'] != "EXCLUDE":
-                        all_splice_site_data.append(('acceptor', chrom, int(row['end']) - 1, '-'))
-                        acceptor_sites[int(row['end']) - 1] = 1
+                    if row['pos_type'] == 'start':
+                        all_splice_site_data.append(('donor', chrom, int(row['pos']) - 1, '-'))
+                        donor_sites[int(row['pos']) - 1] = 1
+                    else:
+                        all_splice_site_data.append(('acceptor', chrom, int(row['pos']) - 1, '-'))
+                        acceptor_sites[int(row['pos']) - 1] = 1
                         
             if chrom not in self._acceptor_truth and chrom not in self._donor_truth:
                 self._acceptor_truth.create_dataset(chrom, data=acceptor_sites, dtype=np.uint8)
@@ -152,7 +151,6 @@ class SegmentNTEvaluator:
             ('type', 'U10'),
             ('chrom', 'U10'),
             ('index', np.int64),
-            ('strand', 'U1')
         ])
         splice_site_array = np.array(all_splice_site_data, dtype=splice_site_dtype)
 
@@ -173,16 +171,12 @@ class SegmentNTEvaluator:
         outputs = apply_fn(parameters, keys, tokens)
         probabilities = jax.nn.softmax(outputs["logits"], axis=-1)[..., -1]
             
-        for i, (chrom, index, strand) in enumerate(batch.keys()):
-            # donor_window = np.array(probabilities[i, :, donor_idx])
-            # acceptor_window = np.array(probabilities[i, :, acceptor_idx])
+        for i, (chrom, index) in enumerate(batch.keys()):
             donor_window = np.array(probabilities[i, 12500:17500, donor_idx])
             acceptor_window = np.array(probabilities[i, 12500:17500, acceptor_idx])
             
-            # half_window = self.sequence_length // 2
-            half_window = 5000 // 2 # Testing to see if a fixed window size works better then the entire prediction window
+            half_window = 5000 // 2
             window_start = index - half_window
-            # window_end = window_start + self.sequence_length
             window_end = window_start + 5000
             
             acceptor_mask = self._acceptor_predictions[chrom][window_start:window_end] != 0
@@ -247,7 +241,6 @@ class SegmentNTEvaluator:
         for site in tqdm(metadata, desc="Processing sites"):
             chrom = site['chrom']
             index = site['index']
-            strand = site['strand']
             
             total_length = self.sequence_length
             half_total = total_length // 2
@@ -256,7 +249,7 @@ class SegmentNTEvaluator:
             window_end = min(len(fasta[chrom]), index + half_total)
             seq = str(fasta[chrom][window_start:window_end])
             
-            batch_key = (chrom, index, strand)
+            batch_key = (chrom, index)
             
             batch[batch_key] = seq
 
@@ -280,7 +273,6 @@ class SegmentNTEvaluator:
         
         for pred_dataset, truth_dataset, site_type in args:    
             type_metadata = metadata[metadata['type'] == site_type]
-            # window_size = self.sequence_length
             window_size = 5000
             total_sites = len(type_metadata)
             total_size = total_sites * window_size
@@ -293,18 +285,12 @@ class SegmentNTEvaluator:
                 index = site['index']
                 chrom = site['chrom']
                 
-                # half_window = self.sequence_length // 2
                 half_window = 5000 // 2
                 window_start = index - half_window
-                # window_end = window_start + self.sequence_length
                 window_end = window_start + 5000
                 
                 site_prediction = pred_dataset[chrom][window_start:window_end]
                 site_truth = truth_dataset[chrom][window_start:window_end]
-                
-                # predictions[current_idx:current_idx+self.sequence_length] = site_prediction
-                # ground_truth[current_idx:current_idx+self.sequence_length] = site_truth
-                # current_idx += self.sequence_length
                 
                 predictions[current_idx:current_idx+5000] = site_prediction
                 ground_truth[current_idx:current_idx+5000] = site_truth
