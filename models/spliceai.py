@@ -321,4 +321,57 @@ class SpliceAIEvaluator:
         print(f"Acceptor AUPRC: {results['acceptor']['auprc']:.4f}, Top-k: {results['acceptor']['topk']:.4f}")
         print(f"Donor AUPRC: {results['donor']['auprc']:.4f}, Top-k: {results['donor']['topk']:.4f}")
         print(f"Mean AUPRC: {mean_auprc:.4f}, Mean Top-k: {mean_topk:.4f}")
+        
+def get_prediciton_consensus(self):
+    metadata = self._splice_sites['metadata'][:]
+    fasta = Fasta(self.consensus_fasta)
+    schema = {
+        'seqname': pl.Utf8,     # For chromosome names
+        'start': pl.Int64,      # For genomic coordinates
+        'end': pl.Int64,        # For genomic coordinates
+        'strand': pl.Utf8,      # For '+' or '-'
+        'sequence': pl.Utf8,    # For the consensus sequence
+        'site_type': pl.Utf8,   # For 'acceptor' or 'donor'
+    }
+    splice_sites_df = pl.DataFrame(schema=schema)
+    for site in metadata:
+        if site['strand'] == '+':
+            if site['site_type'] == 'acceptor':
+                splice_sites_df = splice_sites_df.append({
+                    'seqname': site['chrom'],
+                    'start': (site['index'] - 1),
+                    'end': (site['index'] - 1) + 2,
+                    'strand': site['strand'],
+                    'sequence': fasta[site['chrom']][site['index'] - 1:(site['index'] - 1) + 2],
+                    'site_type': site['site_type'],
+                })
+            else:
+                splice_sites_df = splice_sites_df.append({
+                    'seqname': site['chrom'],
+                    'start': (site['index'] - 1) - 2,
+                    'end': (site['index'] - 1),
+                    'strand': site['strand'],
+                    'sequence': fasta[site['chrom']][site['index'] - 1:(site['index'] - 1) - 2:-1],
+                    'site_type': site['site_type'],
+                })
+        else:
+            if site['site_type'] == 'acceptor':
+                splice_sites_df = splice_sites_df.append({
+                    'seqname': site['chrom'],
+                    'start': (site['index'] - 1) - 2,
+                    'end': (site['index'] - 1),
+                    'strand': site['strand'],
+                    'sequence': fasta[site['chrom']][site['index'] - 1:(site['index'] - 1) - 2:-1],
+                    'site_type': site['site_type'],
+                })
+            else:
+                splice_sites_df = splice_sites_df.append({
+                    'seqname': site['chrom'],
+                    'start': (site['index'] - 1),
+                    'end': (site['index'] - 1) + 2,
+                    'strand': site['strand'],
+                    'sequence': fasta[site['chrom']][site['index'] - 1:(site['index'] - 1) + 2],
+                    'site_type': site['site_type'],
+                })
+    pass
             

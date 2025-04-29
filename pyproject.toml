@@ -11,6 +11,7 @@ dependencies = [
     "gtfparse>=2.5.0",
     "ipykernel>=6.29.5",
     "jax[cuda12-pip]>=0.4.35",
+    "logomaker>=0.8.7",
     "matplotlib>=3.10.1",
     "nucleotide-transformer",
     "numpy<2",
@@ -27,6 +28,7 @@ dependencies = [
     "torchaudio>=2.0.2",
     "torchvision>=0.15.2",
     "tqdm>=4.67.1",
+    "xarray>=2025.3.1",
     "zarr>=2.18.3",
 ]
 
