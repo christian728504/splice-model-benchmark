@@ -1,9 +1,10 @@
 def run_spliceai():
     from models.spliceai import SpliceAIEvaluator
     evaluator = SpliceAIEvaluator()
+    evaluator.filter_gencode()
     evaluator.get_ground_truth()
     evaluator.generate_spliceai_predictions()
-    evaluator.calculate_and_plot_metrics()
+    evaluator.calculate_and_plot_metrics_stratified()
 
 def run_segmentnt():
     from models.segmentnt import SegmentNTEvaluator
@@ -42,7 +43,5 @@ def main():
     """Run evaluation methods for models (only run one at a time)"""
     run_spliceai()
     
-    print("Evaluation completed!")
-
 if __name__ == "__main__":
     main()
