@@ -3,12 +3,13 @@ name = "splice-model-benchmark"
 version = "0.1.0"
 description = "Add your description here"
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 dependencies = [
-    "biopython>=1.85",
+    "bioframe>=0.8.0",
     "dm-haiku>=0.0.13",
     "gffutils>=0.13",
     "gtfparse>=2.5.0",
+    "hvplot>=0.9.1",
     "ipykernel>=6.29.5",
     "jax[cuda12-pip]>=0.4.35",
     "logomaker>=0.8.7",
@@ -19,14 +20,21 @@ dependencies = [
     "pandas>=2.2.3",
     "pangolin",
     "polars>=0.20.31",
+    "porechop",
+    "pulp<2.8",
+    "pybedtools>=0.12.0",
     "pybigwig>=0.3.24",
     "pyensembl>=2.3.13",
     "pyfaidx>=0.8.1.3",
+    "pysam>=0.23.0",
     "pyvcf3>=1.0.3",
     "scikit-learn>=1.6.1",
     "seaborn>=0.13.2",
     "sinkhorn-transformer>=0.11.4",
+    "snakemake>=7.32.4",
+    "snakemake-executor-plugin-slurm>=1.2.4",
     "spliceai>=1.3.1",
+    "streamlit>=1.45.1",
     "tensorflow[and-cuda]>=2.18.1",
     "torch>=2.0.1",
     "torchaudio>=2.0.2",
@@ -40,3 +48,4 @@ dependencies = [
 [tool.uv.sources]
 nucleotide-transformer = { git = "https://github.com/instadeepai/nucleotide-transformer", rev = "main" }
 pangolin = { git = "https://github.com/tkzeng/Pangolin.git", rev = "main" }
+porechop = { git = "https://github.com/artic-network/porechop" }

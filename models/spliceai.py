@@ -166,8 +166,6 @@ class SpliceAIEvaluator:
             else:
                 print(f"Chromosome {chrom} already exists in truth datasets")
 
-        print("Done")
-            
     
     def _process_batch(self, batch, models):
         """Process a batch of sequences and update predictions for entire windows."""
@@ -323,10 +321,6 @@ class SpliceAIEvaluator:
         plt.grid(True)
         plt.savefig(self.aurpc_plot_path, dpi=300, format='svg')
         
-        print(f"Acceptor AUPRC: {results['acceptor']['auprc']:.4f}, Top-k: {results['acceptor']['topk']:.4f}")
-        print(f"Donor AUPRC: {results['donor']['auprc']:.4f}, Top-k: {results['donor']['topk']:.4f}")
-        print(f"Mean AUPRC: {mean_auprc:.4f}, Mean Top-k: {mean_topk:.4f}")
-        
 
     def calculate_and_plot_metrics_stratified(self):
         """
@@ -348,7 +342,7 @@ class SpliceAIEvaluator:
             for sequence in top_sequences:
                 seq_df = type_df.filter(pl.col('sequence') == sequence)
                 
-                window_size = 5000
+                window_size = self.sequence_length
                 total_sites = len(seq_df)
                 total_size = total_sites * window_size
                 
@@ -386,7 +380,6 @@ class SpliceAIEvaluator:
                     'count': total_sites
                 }
 
-
         plt.figure(figsize=(12, 8))
         for sequence, data in results['acceptor'].items():
             plt.plot(data['recall'], data['precision'], 
@@ -398,7 +391,6 @@ class SpliceAIEvaluator:
         plt.grid(True)
         plt.tight_layout()
         plt.savefig(self.stratified_auprc_plot_path.format(type='acceptor'), dpi=300, format='svg')
-
 
         plt.figure(figsize=(12, 8))
         for sequence, data in results['donor'].items():

@@ -12,5 +12,14 @@
 *.vcf
 *.ckpt
 final*
-
+*.bw
+*.bg
+*.tab
+*.bam
+*.bai
+*.bed
+*.stats
+*.json
+golden_standard/.snakemake
+golden_standard/downloads/*
 __pycache__

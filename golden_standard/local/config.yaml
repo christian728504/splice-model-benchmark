@@ -1,0 +1,8 @@
+cores: 24
+# rerun-incomplete: True
+max-jobs-per-second: 1
+restart-times: 3
+latency-wait: 60
+
+default-resources:
+  c: 1
