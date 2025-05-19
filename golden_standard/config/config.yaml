@@ -1,0 +1,5 @@
+METADATA_FILE: "biosample_matched_jill_rna_seq_experiments.tsv"
+GENOME_SIZES_FILE: "genome.sizes"
+CHROMS_FILE: "chroms.txt"
+OUTPUT_DIR: "/zata/zippy/ramirezc/splice-model-benchmark/golden_standard/snakemake_output"
+GTF_PARQUET_PATH: "/zata/zippy/ramirezc/static_files/gencode.v48.basic.annotation.gtf.parquet"

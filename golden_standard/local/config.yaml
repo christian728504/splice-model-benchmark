@@ -1,8 +1,7 @@
-cores: 24
-# rerun-incomplete: True
-max-jobs-per-second: 1
+cores: 32
+# debug: True
 restart-times: 3
-latency-wait: 60
+rerun-incomplete: True
 
-default-resources:
-  c: 1
+resources:
+  download_processes: 8

@@ -1,0 +1,18 @@
+name: benchmark
+channels:
+  - conda-forge
+  - bioconda
+  - defaults
+dependencies:
+  - python
+  - snakemake
+  - snakemake-executor-plugin-slurm
+  - samtools
+  - pybedtools
+  - deeptools
+  - polars
+  - pyarrow
+  - bioframe
+  - seaborn
+  - matplotlib
+  - scipy

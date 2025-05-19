@@ -11,7 +11,6 @@ def _process_chromosome_strand(chrom, strand, bam_path, max_mismatch_rate, min_m
             if read.is_unmapped or \
                 read.is_secondary or \
                 read.is_supplementary or \
-                read.is_duplicate or \
                 read.is_qcfail or \
                 read.mapping_quality < min_mapq:
                 continue
@@ -90,8 +89,4 @@ class GetIntronJunctions:
         
         bed_file_df = pl.from_dict(bed_file)
         
-        with_cpm = bed_file_df.with_columns(
-            (pl.col('reads') / total_mapped_reads * 1e6).alias('reads_per_million')
-        )
-        
-        return with_cpm
+        return bed_file_df

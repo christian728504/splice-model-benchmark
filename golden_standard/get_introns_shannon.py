@@ -27,7 +27,7 @@ def _process_chromosome_strand(chrom, strand, bam_path, fasta_path):
     #             continue
     #         if read.is_qcfail:
     #             continue
-    #         if read.mapping_quality < 20:  # TODO: Ask Tianxong or Jill about this
+    #         if read.mapping_quality < 20:
     #             continue
     #         if strand == '+':
     #             if not read.is_forward:

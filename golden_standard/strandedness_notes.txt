@@ -1,0 +1,17 @@
+## Forward Stranded Libraries:
+
+- When extracting reads from the + strand of the genome, we want the reverse reads (flag 0x10)
+- When extracting reads from the - strand of the genome, we want the forward reads (no flag 0x10)
+
+
+## Reverse Stranded Libraries:
+
+- When extracting reads from the + strand of the genome, we want the forward reads (no flag 0x10)
+- When extracting reads from the - strand of the genome, we want the reverse reads (flag 0x10)
+
+
+## Unstranded Libraries:
+
+(for the application in this script)
+- When extracting reads from the + strand of the genome, we want the forward reads (no flag 0x10)
+- When extracting reads from the - strand of the genome, we want the reverse reads (flag 0x10)

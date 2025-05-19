@@ -1,18 +1,12 @@
 import os
-os.chdir("/zata/zippy/ramirezc/splice-model-benchmark/golden_standard")
 import polars as pl
-import scipy.stats as stats
-import pickle
-import numpy as np
-import bioframe as bf
-import seaborn as sns
-import matplotlib.pyplot as plt
-import pybedtools
-from pybedtools import BedTool
-import subprocess
-from get_introns import GetIntronJunctions
+import warnings
+warnings.filterwarnings("ignore", category=pl.exceptions.CategoricalRemappingWarning)
 
-METADATA_FILE = "biosample_matched_rna_seq_experiments.tsv"
+# TODO: track how many reads are thrown out
+
+workdir: '/zata/zippy/ramirezc/splice-model-benchmark/golden_standard'
+configfile: 'config/config.yaml'
 
 genome_sizes = subprocess.run(
     ["cut", "-f1,2", "GRCh38_no_alt_analysis_set_GCA_000001405.15.fasta.fai"],
@@ -21,317 +15,70 @@ genome_sizes = subprocess.run(
 )
 with open('genome.sizes', 'w') as f:
     f.write(genome_sizes.stdout)
-GENOME_SIZES_FILE = "genome.sizes"
 
-OUTPUT_DIR = "downloads"
-GTF_PARQUET = pl.read_parquet('/zata/zippy/ramirezc/static_files/gencode.v29.basic.annotation.gtf.parquet')
+chroms = subprocess.run(["cut", "-f1", "genome.sizes"], capture_output=True, text=True, check=True)
+with open('chroms.txt', 'w') as f:
+    f.write(chroms.stdout)
 
-exon_gtf = GTF_PARQUET.filter(
-    pl.col('feature') == 'exon'
-).select(
-    'seqname', 'start', 'end', 'strand'
-).rename(
-    {'seqname': 'chrom'}
-).sort(
-    'chrom', 'start'
-)
-forward_exon_gtf = exon_gtf.filter(pl.col('strand') == '+').drop('strand')
-reverse_exon_gtf = exon_gtf.filter(pl.col('strand') == '-').drop('strand')
-forward_exon_gtf.write_csv('forward_exons.bed', separator='\t', include_header=False,)
-reverse_exon_gtf.write_csv('reverse_exons.bed', separator='\t', include_header=False,)
-EXON_BED_FILES = ['forward_exons.bed', 'reverse_exons.bed']
-
-metadata = pl.read_csv(METADATA_FILE, separator="\t")
+metadata = pl.read_csv(config["METADATA_FILE"], separator="\t")
 biosample_accessions = metadata["Biosample accession"].unique().to_list()
+
 long_read_files = metadata.filter(pl.col("Assay") == "long read RNA-seq")
 long_read_biosamples = long_read_files["Biosample accession"].to_list()
 long_read_accessions = long_read_files["File accession"].to_list()
 
+short_read_files = metadata.filter(pl.col("Assay") == "total RNA-seq")
+short_read_biosamples = short_read_files["Biosample accession"].to_list()
+short_read_accessions = short_read_files["File accession"].to_list()
+
 rule all:
     input:
         expand(
-            os.path.join(OUTPUT_DIR, "{biosample}", "{file}.bam"),
-            zip, 
+            os.path.join(config["OUTPUT_DIR"], "{biosample}", "{file}.filtered.bam"),
+            zip,
             biosample=metadata["Biosample accession"].to_list(),
             file=metadata["File accession"].to_list()
         ),
         [
-            os.path.join(OUTPUT_DIR, biosample, f"{longread}.{strand}.coverage.bed")
+            os.path.join(config["OUTPUT_DIR"], biosample, f"{longread}.{strand}.coverage.bg")
             for biosample, longread in zip(long_read_biosamples, long_read_accessions)
             for strand in ['forward', 'reverse']
         ],
         expand(
-            os.path.join(OUTPUT_DIR, "{biosample}", "{longread}.bam.stats"),
+            os.path.join(config["OUTPUT_DIR"], "{biosample}", "{longread}.bam.stats"),
             zip,
             biosample=long_read_biosamples,
             longread=long_read_accessions,
         ),
         expand(
-            os.path.join(OUTPUT_DIR, "{biosample}", "{longread}.svg"),
+            os.path.join(config["OUTPUT_DIR"], "{biosample}", "{longread}.svg"),
             zip,
             biosample=long_read_biosamples,
             longread=long_read_accessions,
         ),
         expand(
-            os.path.join(OUTPUT_DIR, "{biosample}", "{longread}.introns.tab"),
+            os.path.join(config["OUTPUT_DIR"], "{biosample}", "{longread}.introns.tab"),
             zip,
             biosample=long_read_biosamples,
             longread=long_read_accessions,
         ),
-        expand(
-            os.path.join(OUTPUT_DIR, "{biosample}", "{longread}.introns.filtered.tab"),
-            zip,
-            biosample=long_read_biosamples,
-            longread=long_read_accessions,
-        ),  
-        os.path.join(OUTPUT_DIR, "intron_read_distribution.svg"),
+        [
+            os.path.join(config["OUTPUT_DIR"], biosample, f"{longread}.{membership}.introns.filtered.tab")
+            for biosample, longread in zip(long_read_biosamples, long_read_accessions)
+            for membership in ['inclusive', 'exclusive']
+        ],
+        os.path.join("all_longread_introns.tab"),
+        os.path.join("all_shortread_introns.tab"),
 
 
-rule download_file:
-    output:
-        os.path.join(OUTPUT_DIR, "{biosample}", "{file}.bam")
-    params:
-        url = lambda wildcards: metadata.filter(pl.col("File accession") == wildcards.file)["File download URL"].item()
-    shell:
-        """
-        wget -O {output} {params.url}
-        samtools index {output}
-        """
-
-rule get_forward_read_coverage:
-    input:
-        os.path.join(OUTPUT_DIR, "{biosample}", "{longread}.bam")
-    output:
-        forward_blacklist_bed_file = temp(os.path.join(OUTPUT_DIR, "{biosample}", "{longread}.forward.blacklist.bed")),
-        forward_coverage_bed_file = os.path.join(OUTPUT_DIR, "{biosample}", "{longread}.forward.coverage.bed")
-    params:
-        exon_bed_file = EXON_BED_FILES[0],
-        genome_sizes = GENOME_SIZES_FILE
-    resources:
-        c = 8
-    run:
-        exons = BedTool(params.exon_bed_file)
-        merged_exons = exons.merge()
-        sorted_exons = merged_exons.sort(g=params.genome_sizes)
-        non_exonic = sorted_exons.complement(g=params.genome_sizes)
-        non_exonic.saveas(output.blacklist_bed_file)
-        
-        cmd = [
-            "bamCoverage",
-            "--bam", input,
-            "--outFileName", output.forward_coverage_bed_file,
-            "--filterRNAstrand", "forward",
-            "--binSize", "10",
-            "--blackListFileName", output.forward_blacklist_bed_file,
-            "--normalizeUsing", "RPKM",
-            "--numberOfProcessors", str(resources.threads)
-        ]
-        subprocess.run(cmd, check=True)
-
-rule get_reverse_read_coverage:
-    input:
-        os.path.join(OUTPUT_DIR, "{biosample}", "{longread}.bam")
-    output:
-        reverse_blacklist_bed_file = temp(os.path.join(OUTPUT_DIR, "{biosample}", "{longread}.reverse.blacklist.bed")),
-        reverse_coverage_bed_file = os.path.join(OUTPUT_DIR, "{biosample}", "{longread}.reverse.coverage.bed")
-    params:
-        exon_bed_file = EXON_BED_FILES[0],
-        genome_sizes = GENOME_SIZES_FILE
-    resources:
-        c = 8
-    run:
-        exons = BedTool(params.exon_bed_file)
-        merged_exons = exons.merge()
-        logging.info("Sorting merged exons")
-        sorted_exons = merged_exons.sort(g=params.genome_sizes)
-        non_exonic = sorted_exons.complement(g=params.genome_sizes)
-        non_exonic.saveas(output.blacklist_bed_file)
-        
-        cmd = [
-            "bamCoverage",
-            "--bam", input,
-            "--outFileName", output.reverse_coverage_bed_file,
-            "--filterRNAstrand", "reverse",
-            "--binSize", "10",
-            "--blackListFileName", output.reverse_blacklist_bed_file,
-            "--normalizeUsing", "RPKM",
-            "--numberOfProcessors", str(resources.threads)
-        ]
-        subprocess.run(cmd, check=True)
-
-rule get_bam_stats:
-    input:
-        bam_file = os.path.join(OUTPUT_DIR, "{biosample}", "{longread}.bam")
-    output:
-        stats_file = os.path.join(OUTPUT_DIR, "{biosample}", "{longread}.bam.stats"),
-        plot = os.path.join(OUTPUT_DIR, "{biosample}", "{longread}.svg"),
-    resources:
-        c = 8
-    run:
-        cmd = ["stats_from_bam", input.bam_file, "-t", f"{resources.c}"]
-        process = subprocess.run(
-            cmd,
-            check=False,
-            capture_output=True,
-            text=True
-        )
-        with open(output.stats_file, 'w') as f:
-            f.write(process.stdout)
-
-        stats_df = pl.read_csv(output.stats_file, separator='\t')
-
-        plt.style.use('cowplot')
-        color_cycle = plt.rcParams['axes.prop_cycle'].by_key()['color']
-
-        fig, axes = plt.subplots(2, 1, figsize=(10, 10))
-        fig.suptitle('BAM file Statistics (ENCFF219UJG.bam)')
-        axes[0].hist(stats_df['read_length'], bins=100, alpha=0.5, label='Read Length', color=color_cycle[0])
-        axes[0].set_xlabel('Read Length')
-        axes[0].set_ylabel('Count')
-        axes[1].hist(stats_df['acc'], bins=100, alpha=0.5, label='Read Accuracy', color=color_cycle[0])
-        axes[1].set_xlabel('Accuracy')
-        axes[1].set_ylabel('Count')
-        axes[1].ticklabel_format(style='plain', axis='y')
-        for axis in axes:
-            y_ticks = axis.get_yticks()
-            padding = y_ticks[1] * 0.1
-            y_lim_min = y_ticks[0] - padding
-            axis.set_ylim(bottom=y_lim_min)
-
-        plt.savefig(output.plot)
-
-rule get_introns_bed:
-    input:
-        bam_file = os.path.join(OUTPUT_DIR, "{biosample}", "{longread}.bam")
-    output:
-        bed_file = os.path.join(OUTPUT_DIR, "{biosample}", "{longread}.introns.tab")
-    resources:
-        c = 8
-    params:
-        max_mismatch_rate = 0.05,
-        min_mapq = 30,
-    run:
-        GetIntronJunctions(
-            bam_path=input.bam_file,
-            cores=resources.c,
-            max_mismatch_rate=params.max_mismatch_rate,
-            min_mapq=params.min_mapq,
-        ).run().write_csv(output.bed_file, separator='\t')
-
-rule filter_introns:
-    input:
-        bed_file = os.path.join(OUTPUT_DIR, "{biosample}", "{longread}.introns.tab")
-    output:
-        bed_file = os.path.join(OUTPUT_DIR, "{biosample}", "{longread}.introns.filtered.tab")
-    run:
-        intron_df = pl.read_csv(input.bed_file, separator='\t')
-        slim_gtf = GTF_PARQUET.select(['seqname', 'start', 'end', 'strand', 'feature', 'gene_id', 'gene_name', 'transcript_id', 'gene_type'])
-        filtered_gtf = slim_gtf.filter(pl.col('feature') == 'gene', pl.col('gene_type') == 'protein_coding')
-        overlaps = bf.overlap(
-            filtered_gtf.to_pandas(),
-            intron_df.to_pandas(),
-            on=['strand'],
-            how='inner',
-            suffixes=('_gene', '_intron')
-        )
-
-        contained = overlaps[
-            (overlaps['start_intron'] >= overlaps['start_gene']) & 
-            (overlaps['end_intron'] <= overlaps['end_gene'])
-        ]
-        contained_pl = pl.from_pandas(contained)
-        unique_introns = contained_pl.unique(
-            subset=['chrom_intron', 'start_intron', 'end_intron', 'strand_intron', 'reads_intron', 'reads_per_million_intron']
-        ).rename(
-            {
-                'chrom_intron': 'chrom',
-                'start_intron': 'start',
-                'end_intron': 'end',
-                'strand_intron': 'strand',
-                'reads_intron': 'reads',
-                'reads_per_million_intron': 'reads_per_million',
-                'gene_name_gene': 'gene_name',
-            }
-        ).select('chrom', 'start', 'end', 'strand', 'gene_name', 'reads', 'reads_per_million').sort('chrom', 'start')
-
-        unique_introns.write_csv(output.bed_file, separator='\t')
-
-rule plot_intron_read_distribution:
-    input:
-        all_introns_files = expand(
-            os.path.join(OUTPUT_DIR, "{biosample}", "{longread}.introns.filtered.tab"),
-            zip,
-            biosample=long_read_biosamples,
-            longread=long_read_accessions
-        ),
-    output:
-        plot = os.path.join(OUTPUT_DIR, "intron_read_distribution.svg")
-    resources:
-        mem_mb = 16000
-    run:
-        reads = np.empty(0, dtype=np.float64)
-        reads_per_million = np.empty(0, dtype=np.float64)
-
-        for file_path in input.all_introns_files:
-            df = pl.read_csv(file_path, separator='\t')
-            reads = np.append(reads, df.filter(pl.col('reads') > 18)['reads'].to_numpy())
-            reads_per_million = np.append(reads_per_million, df.filter(pl.col('reads') > 18)['reads_per_million'].to_numpy())
-        log_reads = np.log2(reads)
-        log_reads_per_million = np.log2(reads_per_million)
-        
-        plt.style.use('cowplot')
-        fig, axes = plt.subplots(1, 3, figsize=(15, 5))
-        fig.suptitle('Intron Read Distribution')
-        
-        # axes[0].hist(log_reads_per_million, bins=200, alpha=0.5, color='blue')
-        sns.histplot(log_reads_per_million, bins=100, color='blue', ax=axes[0], kde=True)
-        axes[0].set_xlabel('Reads Per Million (RPM)')
-        axes[0].set_ylabel('Frequency')
-        axes[0].set_title('RPM Distribution')
-        
-        ymin, ymax = axes[0].get_ylim()
-        padding = 0.01 * ymax
-        axes[0].set_ylim(bottom=ymin-padding)
-        
-        # axes[1].hist(log_reads, bins=200, alpha=0.5, color='green')
-        sns.histplot(log_reads, bins=100, color='green', ax=axes[1])
-        axes[1].set_xlabel('Number of Reads')
-        axes[1].set_ylabel('Frequency')
-        axes[1].set_title('Raw Read Distribution')
-        
-        ymin, ymax = axes[1].get_ylim()
-        padding = 0.01 * ymax
-        axes[1].set_ylim(bottom=ymin-padding)
-
-        # Fit an F-distribution
-        params = stats.f.fit(log_reads_per_million)
-        df1, df2, loc, scale = params
-        #  Kolmogorov-Smirnov test to check goodness of fit
-        ks_stat, p_value = stats.kstest(log_reads_per_million, 'f', args=params)
-        f_dist_text = (
-            f"F-distribution parameters: df1={df1:.2f}, df2={df2:.2f}\n"
-            f"Kolmogorov-Smirnov test: statistic={ks_stat:.2e}, p-value={p_value:.2e}"
-        )
-
-        # Visual comparison
-        x = np.linspace(min(log_reads_per_million), max(log_reads_per_million), 100)
-        fitted_pdf = stats.f.pdf(x, df1, df2, loc, scale)
-        axes[2].hist(log_reads_per_million, bins=100, color='green', alpha=0.8, density=True)
-        axes[2].plot(x, fitted_pdf, 'r-')
-        xmin, xmax = axes[2].get_xlim()
-        ymin, ymax = axes[2].get_ylim()
-        axes[2].text(
-            x=(xmin + xmax)/2,
-            y=ymin + (ymax-ymin)*-0.20, 
-            s=f_dist_text,
-            horizontalalignment='center',
-        )
-        padding = 0.01 * ymax
-        axes[2].set_ylim(bottom=ymin-padding)
-
-        plt.tight_layout()
-        plt.savefig(output.plot)
-        plt.close()
+include: "rules/download_file.smk"
+include: "rules/get_forward_read_coverage.smk"
+include: "rules/get_reverse_read_coverage.smk"
+include: "rules/get_bam_stats.smk"
+include: "rules/filter_introns.smk"
+include: "rules/get_introns.smk"
+include: "rules/get_all_longread_introns.smk"
+include: "rules/get_all_shortread_introns.smk"
 
 
         
